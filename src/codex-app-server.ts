@@ -11,6 +11,7 @@ export type CodexBridgeOptions = {
   cwd: string
   model?: string
   reasoningEffort?: string
+  developerInstructions?: string
   sandbox: 'read-only' | 'workspace-write' | 'danger-full-access'
   approvalPolicy: 'untrusted' | 'on-request' | 'never'
   threadMapFile: string
@@ -68,7 +69,7 @@ export class CodexAppServer {
     lines.on('line', line => this.handleLine(line))
 
     await this.request('initialize', {
-      clientInfo: { name: 'channel_bridge_mcp', title: 'Channel Bridge MCP', version: '0.2.0' },
+      clientInfo: { name: 'channel_bridge_mcp', title: 'Channel Bridge MCP', version: '0.3.0' },
       capabilities: { experimentalApi: true },
     })
     this.notify('initialized', {})
@@ -113,7 +114,16 @@ export class CodexAppServer {
     const existing = this.threadMap[channelThreadKey]
     if (existing && !this.loadedThreads.has(existing)) {
       try {
-        await this.request('thread/resume', { threadId: existing })
+        await this.request('thread/resume', {
+          threadId: existing,
+          cwd: this.options.cwd,
+          approvalPolicy: this.options.approvalPolicy,
+          sandbox: this.options.sandbox,
+          ...(this.options.model ? { model: this.options.model } : {}),
+          ...(this.options.developerInstructions
+            ? { developerInstructions: this.options.developerInstructions }
+            : {}),
+        })
         this.loadedThreads.add(existing)
         return existing
       } catch {
@@ -128,6 +138,9 @@ export class CodexAppServer {
       approvalPolicy: this.options.approvalPolicy,
       sandbox: this.options.sandbox,
       ...(this.options.model ? { model: this.options.model } : {}),
+      ...(this.options.developerInstructions
+        ? { developerInstructions: this.options.developerInstructions }
+        : {}),
     })
     const thread = response.thread as JsonObject | undefined
     const threadId = String(thread?.id ?? '')

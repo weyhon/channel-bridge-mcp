@@ -1,7 +1,7 @@
 {
   "name": "channel-bridge",
   "description": "MCP channel bridge for Claude Code. Slack adapter included; Discord, Telegram, and Lark adapters planned.",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "author": {
     "name": "Weyhon"
   },

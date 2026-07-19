@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 import { createInterface } from 'node:readline'
+import { appendFileSync } from 'node:fs'
 
 const lines = createInterface({ input: process.stdin })
 lines.on('line', line => {
   const message = JSON.parse(line)
+  if (process.env.FAKE_CODEX_TRACE_FILE) {
+    appendFileSync(process.env.FAKE_CODEX_TRACE_FILE, `${JSON.stringify(message)}\n`)
+  }
   if (message.method === 'initialize') {
     process.stdout.write(`${JSON.stringify({ id: message.id, result: { userAgent: 'fake-codex' } })}\n`)
   } else if (message.method === 'thread/start') {

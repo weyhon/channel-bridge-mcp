@@ -16,10 +16,6 @@ const envFile = join(stateDir, '.env')
 const accessFile = join(stateDir, 'access.json')
 const threadsFile = join(stateDir, 'threads.json')
 const inboxDir = join(stateDir, 'inbox')
-const runtime = (process.env.BRIDGE_RUNTIME ?? 'claude').toLowerCase()
-if (runtime !== 'claude' && runtime !== 'codex') {
-  throw new Error('BRIDGE_RUNTIME must be "claude" or "codex"')
-}
 
 async function loadLocalEnv(): Promise<void> {
   try {
@@ -33,6 +29,10 @@ async function loadLocalEnv(): Promise<void> {
 }
 
 await loadLocalEnv()
+const runtime = (process.env.BRIDGE_RUNTIME ?? 'claude').toLowerCase()
+if (runtime !== 'claude' && runtime !== 'codex') {
+  throw new Error('BRIDGE_RUNTIME must be "claude" or "codex"')
+}
 const botToken = process.env.SLACK_BOT_TOKEN
 const appToken = process.env.SLACK_APP_TOKEN
 if (!botToken || !appToken) {
@@ -88,6 +88,7 @@ const codex = runtime === 'codex'
       cwd: process.env.CODEX_CWD ?? process.cwd(),
       model: process.env.CODEX_MODEL,
       reasoningEffort: process.env.CODEX_REASONING_EFFORT,
+      developerInstructions: process.env.CODEX_DEVELOPER_INSTRUCTIONS,
       sandbox: (process.env.CODEX_SANDBOX ?? 'workspace-write') as 'read-only' | 'workspace-write' | 'danger-full-access',
       approvalPolicy: (process.env.CODEX_APPROVAL_POLICY ?? 'never') as 'untrusted' | 'on-request' | 'never',
       threadMapFile: join(stateDir, 'codex-threads.json'),
@@ -95,7 +96,7 @@ const codex = runtime === 'codex'
   : null
 
 const mcp = new Server(
-  { name: 'channel-bridge-mcp', version: '0.1.0' },
+  { name: 'channel-bridge-mcp', version: '0.3.0' },
   {
     capabilities: {
       tools: {},

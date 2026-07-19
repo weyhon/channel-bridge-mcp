@@ -129,6 +129,7 @@ CODEX_CWD=/absolute/path/to/workspace
 CODEX_APPROVAL_POLICY=never
 CODEX_SANDBOX=workspace-write
 CODEX_REASONING_EFFORT=high
+CODEX_DEVELOPER_INSTRUCTIONS=Reply in the user's preferred language and confirm destructive or external side effects.
 ```
 
 Then run:
@@ -150,6 +151,41 @@ schemas after upgrading Codex:
 ```bash
 ./scripts/generate-codex-schema.sh
 ```
+
+### Run Codex as a macOS service
+
+Use a separate state directory for each bot so Slack credentials, owned-thread
+state, and Codex thread mappings never overlap:
+
+```bash
+export CHANNEL_BRIDGE_STATE_DIR="$HOME/.claude/channels/codex-mini"
+```
+
+Build the project, create `$CHANNEL_BRIDGE_STATE_DIR/logs`, and copy
+`config/macos-launch-agent.example.plist` into `~/Library/LaunchAgents/`.
+Replace every `__PLACEHOLDER__` with an absolute path before loading it:
+
+```bash
+launchctl bootstrap "gui/$(id -u)" \
+  "$HOME/Library/LaunchAgents/com.example.channel-bridge.codex-mini.plist"
+```
+
+The service template uses `RunAtLoad` and `KeepAlive`, so it reconnects after a
+login or an unexpected process exit. Keep the previous service disabled but
+undeleted during migration; rollback should only require booting out the new
+label and re-enabling the old one.
+
+Existing Slack threads can be migrated by writing their owned root keys to
+`threads.json` and their Codex thread IDs to `codex-threads.json`:
+
+```json
+{
+  "C0123456789:1234567890.123456": "019f-example-codex-thread-id"
+}
+```
+
+Only migrate threads whose root message explicitly mentioned this bot. This
+prevents one bot from treating another bot's thread as its own.
 
 ## Roadmap
 
