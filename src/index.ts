@@ -9,12 +9,17 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { SocketModeClient } from '@slack/socket-mode'
 import { WebClient } from '@slack/web-api'
 import { shouldDeliver, type AccessPolicy } from './policy.js'
+import { CodexAppServer } from './codex-app-server.js'
 
 const stateDir = process.env.CHANNEL_BRIDGE_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'channel-bridge')
 const envFile = join(stateDir, '.env')
 const accessFile = join(stateDir, 'access.json')
 const threadsFile = join(stateDir, 'threads.json')
 const inboxDir = join(stateDir, 'inbox')
+const runtime = (process.env.BRIDGE_RUNTIME ?? 'claude').toLowerCase()
+if (runtime !== 'claude' && runtime !== 'codex') {
+  throw new Error('BRIDGE_RUNTIME must be "claude" or "codex"')
+}
 
 async function loadLocalEnv(): Promise<void> {
   try {
@@ -76,6 +81,18 @@ const socket = new SocketModeClient({ appToken })
 const auth = await web.auth.test()
 const botUserId = auth.user_id
 if (!botUserId) throw new Error('Slack auth.test did not return the bot user ID')
+
+const codex = runtime === 'codex'
+  ? new CodexAppServer({
+      binary: process.env.CODEX_BIN ?? 'codex',
+      cwd: process.env.CODEX_CWD ?? process.cwd(),
+      model: process.env.CODEX_MODEL,
+      reasoningEffort: process.env.CODEX_REASONING_EFFORT,
+      sandbox: (process.env.CODEX_SANDBOX ?? 'workspace-write') as 'read-only' | 'workspace-write' | 'danger-full-access',
+      approvalPolicy: (process.env.CODEX_APPROVAL_POLICY ?? 'never') as 'untrusted' | 'on-request' | 'never',
+      threadMapFile: join(stateDir, 'codex-threads.json'),
+    })
+  : null
 
 const mcp = new Server(
   { name: 'channel-bridge-mcp', version: '0.1.0' },
@@ -154,6 +171,31 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 function textResult(text: string, isError = false) {
   return { content: [{ type: 'text' as const, text }], ...(isError ? { isError: true } : {}) }
+}
+
+async function downloadInboundFiles(files: Array<Record<string, unknown>>): Promise<{ imagePaths: string[]; filePaths: string[] }> {
+  const imagePaths: string[] = []
+  const filePaths: string[] = []
+  if (!files.length) return { imagePaths, filePaths }
+  await mkdir(inboxDir, { recursive: true, mode: 0o700 })
+  for (const file of files) {
+    const url = String(file.url_private_download ?? file.url_private ?? '')
+    if (!url) continue
+    const id = String(file.id ?? Date.now())
+    const safeName = String(file.name ?? id).replace(/[^\w.-]+/g, '_')
+    const path = join(inboxDir, `${id}-${safeName}`)
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${botToken}` } })
+    if (!response.ok) throw new Error(`Slack attachment download failed: HTTP ${response.status}`)
+    await writeFile(path, Buffer.from(await response.arrayBuffer()), { mode: 0o600 })
+    if (String(file.mimetype ?? '').startsWith('image/')) imagePaths.push(path)
+    else filePaths.push(path)
+  }
+  return { imagePaths, filePaths }
+}
+
+async function postSlackReply(channel: string, threadTs: string, text: string): Promise<void> {
+  const chunks = text.match(/[\s\S]{1,3500}/g) ?? ['(empty response)']
+  for (const chunk of chunks) await web.chat.postMessage({ channel, thread_ts: threadTs, text: chunk })
 }
 
 async function assertAllowedChannel(channel: string): Promise<void> {
@@ -264,27 +306,45 @@ socket.on('events_api', async ({ body, ack }) => {
 
   const files = Array.isArray(event.files) ? event.files as Array<Record<string, unknown>> : []
   const attachments = files.map(file => `${file.name ?? file.id} (${file.mimetype ?? 'unknown'}, ${file.size ?? '?'}B)`)
-  await (mcp as unknown as { notification(input: unknown): Promise<void> }).notification({
-    method: 'notifications/claude/channel',
-    params: {
-      content: stripMention(text, botUserId) || (attachments.length ? '(attachment)' : ''),
-      meta: {
-        source: 'slack', chat_id: channelId, message_id: messageId, thread_ts: rootTs,
-        user_id: userId, ts: messageId,
-        ...(attachments.length ? { attachment_count: String(attachments.length), attachments: attachments.join('; ') } : {}),
+  const content = stripMention(text, botUserId) || (attachments.length ? '请查看附件。' : '')
+  if (codex) {
+    try {
+      const downloaded = await downloadInboundFiles(files)
+      const response = await codex.runTurn(threadKey(channelId, rootTs), {
+        text: content,
+        imagePaths: downloaded.imagePaths,
+        filePaths: downloaded.filePaths,
+      })
+      await postSlackReply(channelId, rootTs, response)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      await postSlackReply(channelId, rootTs, `Codex 运行失败：${message}`)
+    }
+  } else {
+    await (mcp as unknown as { notification(input: unknown): Promise<void> }).notification({
+      method: 'notifications/claude/channel',
+      params: {
+        content,
+        meta: {
+          source: 'slack', chat_id: channelId, message_id: messageId, thread_ts: rootTs,
+          user_id: userId, ts: messageId,
+          ...(attachments.length ? { attachment_count: String(attachments.length), attachments: attachments.join('; ') } : {}),
+        },
       },
-    },
-  })
+    })
+  }
 })
 
-await mcp.connect(new StdioServerTransport())
+if (codex) await codex.start()
+else await mcp.connect(new StdioServerTransport())
 await socket.start()
-process.stderr.write(`channel-bridge: Slack connected as ${auth.user ?? botUserId}\n`)
+process.stderr.write(`channel-bridge: Slack connected as ${auth.user ?? botUserId} (runtime=${runtime})\n`)
 
 async function shutdown(): Promise<void> {
   await socket.disconnect().catch(() => {})
+  await codex?.stop().catch(() => {})
   process.exit(0)
 }
 process.on('SIGINT', () => void shutdown())
 process.on('SIGTERM', () => void shutdown())
-process.stdin.on('end', () => void shutdown())
+if (runtime === 'claude') process.stdin.on('end', () => void shutdown())

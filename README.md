@@ -1,8 +1,8 @@
 # Channel Bridge MCP
 
-An independent messaging-channel bridge for Claude Code, built on MCP. The
-first adapter is Slack Socket Mode; Discord, Telegram, and Lark adapters are
-planned behind the same channel interface.
+An independent messaging-channel bridge for Claude Code and Codex. The first
+adapter is Slack Socket Mode; Discord, Telegram, and Lark adapters are planned
+behind the same channel interface.
 
 ## Architecture
 
@@ -19,10 +19,13 @@ notifications/claude/channel ---> Claude Code
       Slack Web API <--------- MCP tools
 ```
 
-This is a channel MCP server, not a model proxy. Inbound messages are emitted
-with the experimental `claude/channel` capability. Outbound actions are MCP
-tools: `reply`, `react`, `edit_message`, `fetch_messages`, and
-`download_attachment`.
+The bridge has two runtime modes:
+
+- `BRIDGE_RUNTIME=claude`: inbound messages are emitted with the experimental
+  `claude/channel` MCP capability. Outbound actions are MCP tools.
+- `BRIDGE_RUNTIME=codex`: the bridge starts `codex app-server`, maps each Slack
+  thread to a persistent Codex thread, streams the turn, and posts the final
+  answer back to Slack.
 
 ## Current behavior
 
@@ -76,6 +79,7 @@ Create `~/.claude/channels/channel-bridge/.env`:
 ```dotenv
 SLACK_BOT_TOKEN=xoxb-REPLACE_ME
 SLACK_APP_TOKEN=xapp-REPLACE_ME
+BRIDGE_RUNTIME=claude
 ```
 
 Then protect it:
@@ -101,11 +105,47 @@ The exact install command depends on the marketplace/repository publishing
 method. During development, `npm run dev` can validate Slack connectivity and
 `npm test` validates the access gate.
 
+## Run with Codex
+
+Codex mode uses the local Codex login and the official app-server JSON-RPC
+protocol. Add these values to the same protected `.env` file:
+
+```dotenv
+BRIDGE_RUNTIME=codex
+CODEX_BIN=/absolute/path/to/codex
+CODEX_CWD=/absolute/path/to/workspace
+CODEX_APPROVAL_POLICY=never
+CODEX_SANDBOX=workspace-write
+CODEX_REASONING_EFFORT=high
+```
+
+Then run:
+
+```bash
+npm run build
+npm run start:codex
+```
+
+The unattended default is `workspace-write` plus `never`: Codex can work in the
+configured workspace, while operations requiring elevated approval fail rather
+than hanging. Full-machine access is explicitly opt-in with
+`CODEX_SANDBOX=danger-full-access` and should only be used with strict Slack
+user/channel allowlists.
+
+Codex app-server bindings are version-specific. Regenerate local reference
+schemas after upgrading Codex:
+
+```bash
+./scripts/generate-codex-schema.sh
+```
+
 ## Roadmap
 
 - [x] MCP channel capability and inbound Slack notifications
 - [x] Slack reply/react/edit/history/attachment tools
 - [x] Allowlist and mention/thread policy
+- [x] Codex app-server runtime with persistent Slack-to-Codex thread mapping
+- [x] Slack image/file forwarding to Codex
 - [ ] Pairing command and runtime access management
 - [ ] Permission-request buttons from phone
 - [ ] Discord adapter
