@@ -10,7 +10,8 @@ for name in "${required[@]}"; do
 done
 
 screen_name="${CLAUDE_SCREEN_NAME:-claude-channel}"
-if screen -ls | grep -q "[.]${screen_name}[[:space:]]"; then
+screen_list="$(screen -ls 2>&1 || true)"
+if grep -q "[.]${screen_name}[[:space:]]" <<<"$screen_list"; then
   echo "screen session already running: $screen_name" >&2
   exit 1
 fi
