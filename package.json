@@ -1,6 +1,6 @@
 {
   "name": "channel-bridge-mcp",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Independent MCP channel bridge for Claude Code, starting with Slack Socket Mode.",
   "type": "module",
   "license": "MIT",

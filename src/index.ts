@@ -10,6 +10,7 @@ import { SocketModeClient } from '@slack/socket-mode'
 import { WebClient } from '@slack/web-api'
 import { shouldDeliver, type AccessPolicy } from './policy.js'
 import { CodexAppServer } from './codex-app-server.js'
+import { buildSlackMessageRoute } from './slack-routing.js'
 
 const stateDir = process.env.CHANNEL_BRIDGE_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'channel-bridge')
 const envFile = join(stateDir, '.env')
@@ -96,7 +97,7 @@ const codex = runtime === 'codex'
   : null
 
 const mcp = new Server(
-  { name: 'channel-bridge-mcp', version: '0.3.0' },
+  { name: 'channel-bridge-mcp', version: '0.3.1' },
   {
     capabilities: {
       tools: {},
@@ -106,7 +107,7 @@ const mcp = new Server(
       },
     },
     instructions:
-      'Slack messages arrive through <channel source="slack" ...>. Reply with the reply tool using chat_id and thread_ts from message metadata. Attachments are metadata-only until download_attachment is called.',
+      'Slack messages arrive through <channel source="slack" ...>. Reply with the reply tool using chat_id; include thread_ts only when it is present in message metadata. Attachments are metadata-only until download_attachment is called.',
   },
 )
 
@@ -194,7 +195,7 @@ async function downloadInboundFiles(files: Array<Record<string, unknown>>): Prom
   return { imagePaths, filePaths }
 }
 
-async function postSlackReply(channel: string, threadTs: string, text: string): Promise<void> {
+async function postSlackReply(channel: string, text: string, threadTs?: string): Promise<void> {
   const chunks = text.match(/[\s\S]{1,3500}/g) ?? ['(empty response)']
   for (const chunk of chunks) await web.chat.postMessage({ channel, thread_ts: threadTs, text: chunk })
 }
@@ -288,7 +289,7 @@ socket.on('slack_event', async ({ body, ack }) => {
   const text = String(event.text ?? '')
   const threadTs = event.thread_ts ? String(event.thread_ts) : undefined
   const mentioned = event.type === 'app_mention' || text.includes(`<@${botUserId}>`)
-  const rootTs = threadTs ?? messageId
+  const route = buildSlackMessageRoute(channelId, messageId, threadTs)
   const policy = await loadPolicy()
   const deliver = shouldDeliver(policy, {
     userId,
@@ -296,10 +297,10 @@ socket.on('slack_event', async ({ body, ack }) => {
     threadTs,
     mentioned,
     knownThread: threadTs ? knownThreads.has(threadKey(channelId, threadTs)) : false,
-    isDirectMessage: channelId.startsWith('D'),
+    isDirectMessage: route.isDirectMessage,
   })
   if (!deliver) return
-  if (mentioned || channelId.startsWith('D')) await rememberThread(channelId, rootTs)
+  if (mentioned && !route.isDirectMessage) await rememberThread(channelId, route.replyThreadTs!)
 
   if (policy.ackReaction) {
     void web.reactions.add({ channel: channelId, timestamp: messageId, name: policy.ackReaction }).catch(() => {})
@@ -311,15 +312,15 @@ socket.on('slack_event', async ({ body, ack }) => {
   if (codex) {
     try {
       const downloaded = await downloadInboundFiles(files)
-      const response = await codex.runTurn(threadKey(channelId, rootTs), {
+      const response = await codex.runTurn(route.sessionKey, {
         text: content,
         imagePaths: downloaded.imagePaths,
         filePaths: downloaded.filePaths,
       })
-      await postSlackReply(channelId, rootTs, response)
+      await postSlackReply(channelId, response, route.replyThreadTs)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      await postSlackReply(channelId, rootTs, `Codex 运行失败：${message}`)
+      await postSlackReply(channelId, `Codex 运行失败：${message}`, route.replyThreadTs)
     }
   } else {
     await (mcp as unknown as { notification(input: unknown): Promise<void> }).notification({
@@ -327,8 +328,9 @@ socket.on('slack_event', async ({ body, ack }) => {
       params: {
         content,
         meta: {
-          source: 'slack', chat_id: channelId, message_id: messageId, thread_ts: rootTs,
+          source: 'slack', chat_id: channelId, message_id: messageId,
           user_id: userId, ts: messageId,
+          ...(route.replyThreadTs ? { thread_ts: route.replyThreadTs } : {}),
           ...(attachments.length ? { attachment_count: String(attachments.length), attachments: attachments.join('; ') } : {}),
         },
       },

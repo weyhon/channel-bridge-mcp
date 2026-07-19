@@ -187,6 +187,15 @@ Existing Slack threads can be migrated by writing their owned root keys to
 Only migrate threads whose root message explicitly mentioned this bot. This
 prevents one bot from treating another bot's thread as its own.
 
+### Slack conversation routing
+
+- A top-level channel message must mention the bot. The bridge replies in a
+  thread and keeps that Slack thread mapped to one agent session.
+- A top-level direct message replies in the main DM timeline and all top-level
+  messages in that DM share one continuous agent session.
+- If the user deliberately opens a thread inside a DM, the bridge preserves
+  that thread as a separate session.
+
 ## Roadmap
 
 - [x] MCP channel capability and inbound Slack notifications
