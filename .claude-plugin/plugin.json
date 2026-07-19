@@ -1,0 +1,6 @@
+{
+  "name": "channel-bridge",
+  "description": "MCP channel bridge for Claude Code. Slack adapter included; Discord, Telegram, and Lark adapters planned.",
+  "version": "0.1.0",
+  "keywords": ["slack", "channel", "bridge", "mcp"]
+}

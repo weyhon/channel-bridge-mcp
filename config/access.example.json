@@ -1,0 +1,7 @@
+{
+  "allowUsers": ["U0123456789"],
+  "allowChannels": ["C0123456789"],
+  "requireMentionInChannel": true,
+  "allowThreadFollowups": true,
+  "ackReaction": "eyes"
+}
