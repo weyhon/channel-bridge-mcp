@@ -1,16 +1,16 @@
 {
   "name": "channel-bridge-mcp",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "Independent MCP channel bridge for Claude Code, starting with Slack Socket Mode.",
   "type": "module",
   "license": "MIT",
   "bin": {
-    "channel-bridge-mcp": "dist/index.js"
+    "channel-bridge-mcp": "dist/src/index.js"
   },
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js",
-    "start:codex": "BRIDGE_RUNTIME=codex node dist/index.js",
+    "start": "node dist/src/index.js",
+    "start:codex": "BRIDGE_RUNTIME=codex node dist/src/index.js",
     "dev": "tsx src/index.ts",
     "test": "node --import tsx --test test/*.test.ts",
     "check": "npm run build && npm test"

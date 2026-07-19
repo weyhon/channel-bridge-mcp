@@ -2,7 +2,7 @@
   "mcpServers": {
     "channel-bridge": {
       "command": "npm",
-      "args": ["run", "--silent", "start", "--prefix", "${CLAUDE_PLUGIN_ROOT}"]
+      "args": ["--prefix", "${CLAUDE_PLUGIN_ROOT}", "run", "--silent", "start"]
     }
   }
 }

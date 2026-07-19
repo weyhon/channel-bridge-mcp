@@ -271,7 +271,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async request => {
 })
 
 const seen = new Set<string>()
-socket.on('events_api', async ({ body, ack }) => {
+socket.on('slack_event', async ({ body, ack }) => {
   await ack()
   const event = (body as { event?: Record<string, unknown> }).event
   if (!event || event.type !== 'message' && event.type !== 'app_mention') return

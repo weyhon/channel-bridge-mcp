@@ -48,6 +48,7 @@ Bot scopes:
 - `channels:history`
 - `chat:write`
 - `files:read`
+- `im:history`
 - `reactions:read`
 - `reactions:write`
 - `users:read`
@@ -94,16 +95,27 @@ and set mode `600`.
 
 ## Run with Claude Code
 
-For local development, add this repository as a Claude Code plugin or register
-its `.mcp.json`, then launch Claude Code with the channel enabled:
+Register this repository as a local Claude Code marketplace and install the
+plugin:
 
 ```bash
-claude --channels plugin:channel-bridge@your-marketplace
+claude plugin marketplace add /absolute/path/to/channel-bridge-mcp
+claude plugin install channel-bridge@weyhon-channel-bridge --scope user
 ```
 
-The exact install command depends on the marketplace/repository publishing
-method. During development, `npm run dev` can validate Slack connectivity and
-`npm test` validates the access gate.
+Because this is a self-developed channel rather than an Anthropic-approved
+channel, launch it with the explicit development-channel gate:
+
+```bash
+claude --dangerously-load-development-channels \
+  plugin:channel-bridge@weyhon-channel-bridge
+```
+
+Claude Code displays a confirmation screen before loading a development
+channel. Only confirm code you own and have reviewed. The Slack user/channel
+allowlists remain enforced after this gate is enabled. During development,
+`npm run dev` validates Slack connectivity and `npm test` validates the access
+gate.
 
 ## Run with Codex
 
@@ -152,7 +164,7 @@ schemas after upgrading Codex:
 - [ ] Telegram adapter
 - [ ] Lark/Feishu adapter
 - [ ] Adapter contract and conformance test suite
-- [ ] Installable Claude Code marketplace package
+- [x] Installable Claude Code marketplace package
 
 ## Security
 
