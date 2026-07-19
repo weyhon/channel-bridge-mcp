@@ -66,3 +66,28 @@ test('reapplies production settings when resuming a migrated Codex thread', asyn
     delete process.env.FAKE_CODEX_TRACE_FILE
   }
 })
+
+test('times out a stuck Codex request instead of hanging forever', async () => {
+  const state = await mkdtemp(join(tmpdir(), 'channel-bridge-codex-timeout-'))
+  process.env.FAKE_CODEX_HANG_METHOD = 'turn/start'
+  const app = new CodexAppServer({
+    binary: resolve('test/fixtures/fake-codex.mjs'),
+    cwd: process.cwd(),
+    home: join(state, 'codex-home'),
+    sandbox: 'workspace-write',
+    approvalPolicy: 'never',
+    threadMapFile: join(state, 'codex-threads.json'),
+    requestTimeoutMs: 1_000,
+  })
+
+  await app.start()
+  try {
+    await assert.rejects(
+      app.runTurn('C1:timeout', { text: 'hello' }),
+      /Codex request turn\/start timed out after 1000ms/,
+    )
+  } finally {
+    await app.stop()
+    delete process.env.FAKE_CODEX_HANG_METHOD
+  }
+})

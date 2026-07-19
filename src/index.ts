@@ -87,17 +87,20 @@ const codex = runtime === 'codex'
   ? new CodexAppServer({
       binary: process.env.CODEX_BIN ?? 'codex',
       cwd: process.env.CODEX_CWD ?? process.cwd(),
+      home: process.env.CODEX_HOME,
       model: process.env.CODEX_MODEL,
       reasoningEffort: process.env.CODEX_REASONING_EFFORT,
       developerInstructions: process.env.CODEX_DEVELOPER_INSTRUCTIONS,
       sandbox: (process.env.CODEX_SANDBOX ?? 'workspace-write') as 'read-only' | 'workspace-write' | 'danger-full-access',
       approvalPolicy: (process.env.CODEX_APPROVAL_POLICY ?? 'never') as 'untrusted' | 'on-request' | 'never',
       threadMapFile: join(stateDir, 'codex-threads.json'),
+      requestTimeoutMs: Number(process.env.CODEX_REQUEST_TIMEOUT_MS ?? 30_000),
+      turnTimeoutMs: Number(process.env.CODEX_TURN_TIMEOUT_MS ?? 15 * 60_000),
     })
   : null
 
 const mcp = new Server(
-  { name: 'channel-bridge-mcp', version: '0.3.1' },
+  { name: 'channel-bridge-mcp', version: '0.3.2' },
   {
     capabilities: {
       tools: {},
@@ -321,6 +324,7 @@ socket.on('slack_event', async ({ body, ack }) => {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       await postSlackReply(channelId, `Codex 运行失败：${message}`, route.replyThreadTs)
+      if (message.includes('timed out')) setTimeout(() => void shutdown(), 250)
     }
   } else {
     await (mcp as unknown as { notification(input: unknown): Promise<void> }).notification({

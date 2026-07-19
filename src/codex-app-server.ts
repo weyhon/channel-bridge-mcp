@@ -9,12 +9,15 @@ type RpcMessage = { id?: number | string; method?: string; params?: JsonObject; 
 export type CodexBridgeOptions = {
   binary: string
   cwd: string
+  home?: string
   model?: string
   reasoningEffort?: string
   developerInstructions?: string
   sandbox: 'read-only' | 'workspace-write' | 'danger-full-access'
   approvalPolicy: 'untrusted' | 'on-request' | 'never'
   threadMapFile: string
+  requestTimeoutMs?: number
+  turnTimeoutMs?: number
 }
 
 export type CodexTurnInput = {
@@ -26,6 +29,7 @@ export type CodexTurnInput = {
 type PendingRequest = {
   resolve: (value: JsonObject) => void
   reject: (error: Error) => void
+  timeout: ReturnType<typeof setTimeout>
 }
 
 type TurnWaiter = {
@@ -33,6 +37,7 @@ type TurnWaiter = {
   finalText?: string
   resolve: (text: string) => void
   reject: (error: Error) => void
+  timeout: ReturnType<typeof setTimeout>
 }
 
 export class CodexAppServer {
@@ -54,13 +59,22 @@ export class CodexAppServer {
     this.process = spawn(this.options.binary, ['app-server', '--stdio'], {
       cwd: this.options.cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: process.env,
+      env: {
+        ...process.env,
+        ...(this.options.home ? { CODEX_HOME: this.options.home } : {}),
+      },
     })
     this.process.stderr.on('data', chunk => process.stderr.write(`codex app-server: ${chunk}`))
     this.process.once('exit', (code, signal) => {
       const error = new Error(`codex app-server exited (code=${code}, signal=${signal})`)
-      for (const request of this.pending.values()) request.reject(error)
-      for (const turn of this.turnWaiters.values()) turn.reject(error)
+      for (const request of this.pending.values()) {
+        clearTimeout(request.timeout)
+        request.reject(error)
+      }
+      for (const turn of this.turnWaiters.values()) {
+        clearTimeout(turn.timeout)
+        turn.reject(error)
+      }
       this.pending.clear()
       this.turnWaiters.clear()
     })
@@ -69,7 +83,7 @@ export class CodexAppServer {
     lines.on('line', line => this.handleLine(line))
 
     await this.request('initialize', {
-      clientInfo: { name: 'channel_bridge_mcp', title: 'Channel Bridge MCP', version: '0.3.1' },
+      clientInfo: { name: 'channel_bridge_mcp', title: 'Channel Bridge MCP', version: '0.3.2' },
       capabilities: { experimentalApi: true },
     })
     this.notify('initialized', {})
@@ -106,7 +120,12 @@ export class CodexAppServer {
     if (!turnId) throw new Error('turn/start did not return a turn id')
 
     return new Promise<string>((resolve, reject) => {
-      this.turnWaiters.set(turnId, { chunks: [], resolve, reject })
+      const timeoutMs = this.options.turnTimeoutMs ?? 15 * 60_000
+      const timeout = setTimeout(() => {
+        this.turnWaiters.delete(turnId)
+        reject(new Error(`Codex turn timed out after ${timeoutMs}ms`))
+      }, timeoutMs)
+      this.turnWaiters.set(turnId, { chunks: [], resolve, reject, timeout })
     })
   }
 
@@ -182,6 +201,7 @@ export class CodexAppServer {
       const request = this.pending.get(message.id)
       if (!request) return
       this.pending.delete(message.id)
+      clearTimeout(request.timeout)
       if (message.error) request.reject(new Error(String(message.error.message ?? JSON.stringify(message.error))))
       else request.resolve(message.result ?? {})
       return
@@ -205,6 +225,7 @@ export class CodexAppServer {
       if (item?.type === 'agentMessage' && item.text) waiter.finalText = String(item.text)
     } else if (message.method === 'turn/completed') {
       this.turnWaiters.delete(turnId)
+      clearTimeout(waiter.timeout)
       const turn = params.turn as JsonObject | undefined
       const status = String(turn?.status ?? 'unknown')
       if (status === 'completed') waiter.resolve(waiter.chunks.join('').trim() || waiter.finalText?.trim() || '(Codex completed without a text response)')
@@ -226,8 +247,19 @@ export class CodexAppServer {
   private request(method: string, params: JsonObject): Promise<JsonObject> {
     const id = this.nextId++
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject })
-      this.send({ method, id, params })
+      const timeoutMs = this.options.requestTimeoutMs ?? 30_000
+      const timeout = setTimeout(() => {
+        this.pending.delete(id)
+        reject(new Error(`Codex request ${method} timed out after ${timeoutMs}ms`))
+      }, timeoutMs)
+      this.pending.set(id, { resolve, reject, timeout })
+      try {
+        this.send({ method, id, params })
+      } catch (error) {
+        clearTimeout(timeout)
+        this.pending.delete(id)
+        reject(error instanceof Error ? error : new Error(String(error)))
+      }
     })
   }
 

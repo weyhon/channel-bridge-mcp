@@ -8,6 +8,7 @@ lines.on('line', line => {
   if (process.env.FAKE_CODEX_TRACE_FILE) {
     appendFileSync(process.env.FAKE_CODEX_TRACE_FILE, `${JSON.stringify(message)}\n`)
   }
+  if (process.env.FAKE_CODEX_HANG_METHOD === message.method) return
   if (message.method === 'initialize') {
     process.stdout.write(`${JSON.stringify({ id: message.id, result: { userAgent: 'fake-codex' } })}\n`)
   } else if (message.method === 'thread/start') {

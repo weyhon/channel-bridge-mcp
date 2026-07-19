@@ -161,6 +161,23 @@ state, and Codex thread mappings never overlap:
 export CHANNEL_BRIDGE_STATE_DIR="$HOME/.claude/channels/codex-mini"
 ```
 
+Give the bridge its own Codex home so a different Codex client cannot replace
+its model cache with an incompatible schema. At minimum, share authentication:
+
+```bash
+export CODEX_HOME="$CHANNEL_BRIDGE_STATE_DIR/codex-home"
+ln -s "$HOME/.codex/auth.json" "$CODEX_HOME/auth.json"
+```
+
+For feature parity with a local Codex installation, the deployment may also
+symlink `config.toml`, `skills`, and `plugins` from the primary Codex home. Do
+not share `models_cache.json` or the session database; those remain isolated.
+
+Codex RPC requests time out after 30 seconds and full turns after 15 minutes by
+default. Override them with `CODEX_REQUEST_TIMEOUT_MS` and
+`CODEX_TURN_TIMEOUT_MS`. A timeout is reported back to Slack and the launchd
+service restarts with a fresh app-server process.
+
 Build the project, create `$CHANNEL_BRIDGE_STATE_DIR/logs`, and copy
 `config/macos-launch-agent.example.plist` into `~/Library/LaunchAgents/`.
 Replace every `__PLACEHOLDER__` with an absolute path before loading it:
