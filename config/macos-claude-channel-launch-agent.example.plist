@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>__SERVICE_LABEL__</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/expect</string>
+    <string>__PROJECT_ROOT__/scripts/run-claude-channel-service.exp</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__CLAUDE_CWD__</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>CLAUDE_BIN</key>
+    <string>__CLAUDE_BIN__</string>
+    <key>CLAUDE_CHANNEL_PLUGIN</key>
+    <string>__CLAUDE_CHANNEL_PLUGIN__</string>
+    <key>CLAUDE_SESSION_ID</key>
+    <string>__CLAUDE_SESSION_ID__</string>
+    <key>CLAUDE_SETTINGS_FILE</key>
+    <string>__CLAUDE_SETTINGS_FILE__</string>
+    <key>PATH</key>
+    <string>__PATH__</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>StandardOutPath</key>
+  <string>__LOG_DIR__/stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>__LOG_DIR__/stderr.log</string>
+</dict>
+</plist>

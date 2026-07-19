@@ -213,6 +213,37 @@ prevents one bot from treating another bot's thread as its own.
 - If the user deliberately opens a thread inside a DM, the bridge preserves
   that thread as a separate session.
 
+### Run a Claude Channel without a visible terminal
+
+Claude Channels still require a long-lived Claude Code parent process. On
+macOS, `config/macos-claude-channel-launch-agent.example.plist` runs that parent
+under launchd while `scripts/run-claude-channel-service.exp` supplies the
+pseudo-terminal required by the experimental Channels interface.
+
+Use a dedicated Claude Session and settings file for each service. The example
+settings enable only `channel-bridge`, so globally enabled Discord or Telegram
+plugins are not inherited by the Slack service. Create and validate the new
+Session before switching launchd to `--resume`; this preserves Slack context
+across process restarts without sharing it with another channel.
+
+The expect wrapper confirms the warning shown by
+`--dangerously-load-development-channels`. Only use it for a channel plugin you
+control and have reviewed locally. Production-distributed plugins should use
+Claude's approved `--channels` path instead.
+
+On macOS, a LaunchAgent does not automatically inherit Terminal's Full Disk
+Access. If the Claude working directory is in iCloud, Nutstore, or another
+privacy-protected location, grant the supervised Claude/expect executables Full
+Disk Access first. Otherwise use a detached `screen` session started from an
+already authorized Terminal; it remains invisible while preserving that
+Terminal security context.
+
+The repository includes `scripts/start-claude-channel-screen.sh` for that
+fallback. Set `CLAUDE_BIN`, `CLAUDE_CHANNEL_PLUGIN`, `CLAUDE_SESSION_ID`,
+`CLAUDE_SETTINGS_FILE`, `CLAUDE_CWD`, and optionally `CLAUDE_SCREEN_NAME`, then
+run the script once after a Mac restart. Inspect it with `screen -ls` and stop
+only that service with `screen -S <name> -X quit`.
+
 ## Roadmap
 
 - [x] MCP channel capability and inbound Slack notifications

@@ -83,7 +83,7 @@ export class CodexAppServer {
     lines.on('line', line => this.handleLine(line))
 
     await this.request('initialize', {
-      clientInfo: { name: 'channel_bridge_mcp', title: 'Channel Bridge MCP', version: '0.3.2' },
+      clientInfo: { name: 'channel_bridge_mcp', title: 'Channel Bridge MCP', version: '0.3.3' },
       capabilities: { experimentalApi: true },
     })
     this.notify('initialized', {})

@@ -100,7 +100,7 @@ const codex = runtime === 'codex'
   : null
 
 const mcp = new Server(
-  { name: 'channel-bridge-mcp', version: '0.3.2' },
+  { name: 'channel-bridge-mcp', version: '0.3.3' },
   {
     capabilities: {
       tools: {},

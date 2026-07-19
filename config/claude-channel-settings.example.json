@@ -1,0 +1,11 @@
+{
+  "enabledPlugins": {
+    "channel-bridge@weyhon-channel-bridge": true
+  },
+  "permissions": {
+    "defaultMode": "bypassPermissions",
+    "additionalDirectories": [
+      "__CLAUDE_ALLOWED_ROOT__"
+    ]
+  }
+}
