@@ -36,6 +36,11 @@ The bridge has two runtime modes:
 - Direct messages are accepted only from allowlisted users.
 - Attachment metadata is delivered immediately; bytes are downloaded only
   when Claude calls `download_attachment`.
+- Socket Mode lifecycle changes are logged and an unhealthy connection causes
+  the launchd-managed process to restart after a grace period.
+- Optional Slack Web API polling provides at-least-once recovery when a Socket
+  Mode event is missed. Poll watermarks are persisted in the protected state
+  directory, so recovery continues correctly across process restarts.
 - Tokens and runtime state stay outside the repository.
 
 ## Slack application
@@ -81,6 +86,12 @@ Create `~/.claude/channels/channel-bridge/.env`:
 SLACK_BOT_TOKEN=xoxb-REPLACE_ME
 SLACK_APP_TOKEN=xapp-REPLACE_ME
 BRIDGE_RUNTIME=claude
+
+# Recommended reliability fallback for every DM/channel this bot serves
+SLACK_POLL_CHANNELS=D0123456789,C0123456789
+SLACK_POLL_INTERVAL_MS=5000
+SLACK_SOCKET_HEALTH_INTERVAL_MS=15000
+SLACK_SOCKET_UNHEALTHY_RESTART_MS=60000
 ```
 
 Then protect it:

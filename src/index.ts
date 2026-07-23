@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { readFile, writeFile, mkdir, rename } from 'node:fs/promises'
 import { chmodSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -18,12 +18,14 @@ import {
   slackTsBefore,
   type SlackHistoryMessage,
 } from './slack-polling.js'
+import { shouldRestartSocket } from './slack-health.js'
 
 const stateDir = process.env.CHANNEL_BRIDGE_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'channel-bridge')
 const envFile = join(stateDir, '.env')
 const accessFile = join(stateDir, 'access.json')
 const threadsFile = join(stateDir, 'threads.json')
 const inboxDir = join(stateDir, 'inbox')
+const pollWatermarksFile = join(stateDir, 'slack-poll-watermarks.json')
 
 async function loadLocalEnv(): Promise<void> {
   try {
@@ -91,6 +93,22 @@ const botUserId = String(auth.user_id ?? '')
 if (!botUserId) throw new Error('Slack auth.test did not return the bot user ID')
 const pollChannels = parsePollChannels(process.env.SLACK_POLL_CHANNELS)
 const pollIntervalMs = Math.max(Number(process.env.SLACK_POLL_INTERVAL_MS ?? 5000), 1000)
+const socketHealthIntervalMs = Math.max(Number(process.env.SLACK_SOCKET_HEALTH_INTERVAL_MS ?? 15_000), 5000)
+const socketUnhealthyRestartMs = Math.max(Number(process.env.SLACK_SOCKET_UNHEALTHY_RESTART_MS ?? 60_000), 30_000)
+
+let socketState = 'initializing'
+let socketStateChangedAt = Date.now()
+let bridgeShuttingDown = false
+for (const state of ['connecting', 'connected', 'reconnecting', 'disconnecting', 'disconnected'] as const) {
+  socket.on(state, () => {
+    socketState = state
+    socketStateChangedAt = Date.now()
+    process.stderr.write(`channel-bridge: Slack socket state=${state}\n`)
+  })
+}
+socket.on('error', error => {
+  process.stderr.write(`channel-bridge: Slack socket error: ${error}\n`)
+})
 
 const codex = runtime === 'codex'
   ? new CodexAppServer({
@@ -385,8 +403,23 @@ socket.on('slack_event', async ({ body, ack }) => {
 if (codex) await codex.start()
 else await mcp.connect(new StdioServerTransport())
 
-const pollWatermarks = new Map<string, string>()
+let pollWatermarks = new Map<string, string>()
+try {
+  const saved = JSON.parse(await readFile(pollWatermarksFile, 'utf8')) as Record<string, string>
+  pollWatermarks = new Map(Object.entries(saved).filter(([channel, ts]) =>
+    pollChannels.includes(channel) && typeof ts === 'string',
+  ))
+} catch {}
+
+async function persistPollWatermarks(): Promise<void> {
+  await mkdir(stateDir, { recursive: true, mode: 0o700 })
+  const temporaryFile = `${pollWatermarksFile}.${process.pid}.tmp`
+  await writeFile(temporaryFile, `${JSON.stringify(Object.fromEntries(pollWatermarks), null, 2)}\n`, { mode: 0o600 })
+  await rename(temporaryFile, pollWatermarksFile)
+}
+
 for (const channel of pollChannels) {
+  if (pollWatermarks.has(channel)) continue
   try {
     const history = await web.conversations.history({ channel, limit: 1 })
     const latest = history.messages?.[0]
@@ -402,6 +435,9 @@ for (const channel of pollChannels) {
     process.stderr.write(`channel-bridge: failed to initialize Slack poll channel ${channel}: ${error}\n`)
   }
 }
+await persistPollWatermarks().catch(error => {
+  process.stderr.write(`channel-bridge: failed to persist initial Slack poll watermarks: ${error}\n`)
+})
 
 await socket.start()
 process.stderr.write(`channel-bridge: Slack connected as ${auth.user ?? botUserId} (runtime=${runtime})\n`)
@@ -428,7 +464,10 @@ async function pollSlackHistory(): Promise<void> {
       for (const message of messages) {
         const consumed = await handleSlackEvent({ type: 'message', channel, ...message }, 'poll')
         if (!consumed) break
-        if (message.ts) pollWatermarks.set(channel, message.ts)
+        if (message.ts) {
+          pollWatermarks.set(channel, message.ts)
+          await persistPollWatermarks()
+        }
       }
     }
   } catch (error) {
@@ -441,9 +480,26 @@ async function pollSlackHistory(): Promise<void> {
 const pollTimer = pollChannels.length
   ? setInterval(() => void pollSlackHistory(), pollIntervalMs)
   : undefined
+const socketHealthTimer = setInterval(() => {
+  if (bridgeShuttingDown) return
+  const active = socket.websocket?.isActive() ?? false
+  if (!shouldRestartSocket({
+    active,
+    stateChangedAt: socketStateChangedAt,
+    now: Date.now(),
+    unhealthyRestartMs: socketUnhealthyRestartMs,
+  })) return
+  process.stderr.write(
+    `channel-bridge: Slack socket unhealthy for ${socketUnhealthyRestartMs}ms ` +
+    `(state=${socketState}); exiting so launchd can restart the bridge\n`,
+  )
+  process.exit(1)
+}, socketHealthIntervalMs)
 
 async function shutdown(): Promise<void> {
+  bridgeShuttingDown = true
   if (pollTimer) clearInterval(pollTimer)
+  clearInterval(socketHealthTimer)
   await socket.disconnect().catch(() => {})
   await codex?.stop().catch(() => {})
   process.exit(0)
