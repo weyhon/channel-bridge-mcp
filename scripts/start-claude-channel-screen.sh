@@ -17,15 +17,28 @@ if grep -q "[.]${screen_name}[[:space:]]" <<<"$screen_list"; then
 fi
 
 cd "$CLAUDE_CWD"
+claude_args=(
+  --dangerously-skip-permissions
+  --dangerously-load-development-channels "$CLAUDE_CHANNEL_PLUGIN"
+  --setting-sources project,local
+  --settings "$CLAUDE_SETTINGS_FILE"
+  --no-chrome
+)
+
+if [[ "${CLAUDE_NEW_SESSION:-false}" == "true" ]]; then
+  claude_args+=(--session-id "$CLAUDE_SESSION_ID")
+else
+  claude_args+=(--resume "$CLAUDE_SESSION_ID")
+fi
+
+if [[ -n "${CLAUDE_APPEND_SYSTEM_PROMPT_FILE:-}" ]]; then
+  claude_args+=(--append-system-prompt-file "$CLAUDE_APPEND_SYSTEM_PROMPT_FILE")
+fi
+
 screen -DmS "$screen_name" \
   "$CLAUDE_BIN" \
-  --dangerously-skip-permissions \
-  --dangerously-load-development-channels "$CLAUDE_CHANNEL_PLUGIN" \
-  --resume "$CLAUDE_SESSION_ID" \
-  --setting-sources project,local \
-  --settings "$CLAUDE_SETTINGS_FILE" \
-  --no-chrome \
-  </dev/null >/dev/null 2>&1
+  "${claude_args[@]}" \
+  </dev/null >/dev/null 2>&1 &
 
 sleep 5
 screen -S "$screen_name" -p 0 -X stuff $'\015'
