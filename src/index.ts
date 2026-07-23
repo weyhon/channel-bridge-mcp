@@ -11,6 +11,13 @@ import { WebClient } from '@slack/web-api'
 import { shouldDeliver, type AccessPolicy } from './policy.js'
 import { CodexAppServer } from './codex-app-server.js'
 import { buildSlackMessageRoute } from './slack-routing.js'
+import {
+  isSlackTsRecent,
+  orderMessagesAfter,
+  parsePollChannels,
+  slackTsBefore,
+  type SlackHistoryMessage,
+} from './slack-polling.js'
 
 const stateDir = process.env.CHANNEL_BRIDGE_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'channel-bridge')
 const envFile = join(stateDir, '.env')
@@ -80,8 +87,10 @@ function stripMention(text: string, botUserId: string): string {
 const web = new WebClient(botToken)
 const socket = new SocketModeClient({ appToken })
 const auth = await web.auth.test()
-const botUserId = auth.user_id
+const botUserId = String(auth.user_id ?? '')
 if (!botUserId) throw new Error('Slack auth.test did not return the bot user ID')
+const pollChannels = parsePollChannels(process.env.SLACK_POLL_CHANNELS)
+const pollIntervalMs = Math.max(Number(process.env.SLACK_POLL_INTERVAL_MS ?? 5000), 1000)
 
 const codex = runtime === 'codex'
   ? new CodexAppServer({
@@ -276,78 +285,165 @@ mcp.setRequestHandler(CallToolRequestSchema, async request => {
 })
 
 const seen = new Set<string>()
-socket.on('slack_event', async ({ body, ack }) => {
-  await ack()
-  const event = (body as { event?: Record<string, unknown> }).event
-  if (!event || event.type !== 'message' && event.type !== 'app_mention') return
-  if (event.bot_id || event.subtype) return
+const processing = new Set<string>()
+function rememberSeen(messageId: string): void {
+  seen.add(messageId)
+  if (seen.size > 500) seen.delete(seen.values().next().value!)
+}
+
+async function handleSlackEvent(
+  event: Record<string, unknown> | undefined,
+  source: 'socket' | 'poll' = 'socket',
+): Promise<boolean> {
+  if (!event || event.type !== 'message' && event.type !== 'app_mention') return true
+  if (event.bot_id || event.subtype) return true
 
   const userId = String(event.user ?? '')
   const channelId = String(event.channel ?? '')
   const messageId = String(event.ts ?? '')
-  if (!userId || !channelId || !messageId || seen.has(messageId)) return
-  seen.add(messageId)
-  if (seen.size > 500) seen.delete(seen.values().next().value!)
+  if (!userId || !channelId || !messageId || seen.has(messageId)) return true
+  if (processing.has(messageId)) return false
+  processing.add(messageId)
 
-  const text = String(event.text ?? '')
-  const threadTs = event.thread_ts ? String(event.thread_ts) : undefined
-  const mentioned = event.type === 'app_mention' || text.includes(`<@${botUserId}>`)
-  const route = buildSlackMessageRoute(channelId, messageId, threadTs)
-  const policy = await loadPolicy()
-  const deliver = shouldDeliver(policy, {
-    userId,
-    channelId,
-    threadTs,
-    mentioned,
-    knownThread: threadTs ? knownThreads.has(threadKey(channelId, threadTs)) : false,
-    isDirectMessage: route.isDirectMessage,
-  })
-  if (!deliver) return
-  if (mentioned && !route.isDirectMessage) await rememberThread(channelId, route.replyThreadTs!)
-
-  if (policy.ackReaction) {
-    void web.reactions.add({ channel: channelId, timestamp: messageId, name: policy.ackReaction }).catch(() => {})
-  }
-
-  const files = Array.isArray(event.files) ? event.files as Array<Record<string, unknown>> : []
-  const attachments = files.map(file => `${file.name ?? file.id} (${file.mimetype ?? 'unknown'}, ${file.size ?? '?'}B)`)
-  const content = stripMention(text, botUserId) || (attachments.length ? '请查看附件。' : '')
-  if (codex) {
-    try {
-      const downloaded = await downloadInboundFiles(files)
-      const response = await codex.runTurn(route.sessionKey, {
-        text: content,
-        imagePaths: downloaded.imagePaths,
-        filePaths: downloaded.filePaths,
-      })
-      await postSlackReply(channelId, response, route.replyThreadTs)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      await postSlackReply(channelId, `Codex 运行失败：${message}`, route.replyThreadTs)
-      if (message.includes('timed out')) setTimeout(() => void shutdown(), 250)
-    }
-  } else {
-    await (mcp as unknown as { notification(input: unknown): Promise<void> }).notification({
-      method: 'notifications/claude/channel',
-      params: {
-        content,
-        meta: {
-          source: 'slack', chat_id: channelId, message_id: messageId,
-          user_id: userId, ts: messageId,
-          ...(route.replyThreadTs ? { thread_ts: route.replyThreadTs } : {}),
-          ...(attachments.length ? { attachment_count: String(attachments.length), attachments: attachments.join('; ') } : {}),
-        },
-      },
+  try {
+    const text = String(event.text ?? '')
+    const threadTs = event.thread_ts ? String(event.thread_ts) : undefined
+    const mentioned = event.type === 'app_mention' || text.includes(`<@${botUserId}>`)
+    const route = buildSlackMessageRoute(channelId, messageId, threadTs)
+    const policy = await loadPolicy()
+    const deliver = shouldDeliver(policy, {
+      userId,
+      channelId,
+      threadTs,
+      mentioned,
+      knownThread: threadTs ? knownThreads.has(threadKey(channelId, threadTs)) : false,
+      isDirectMessage: route.isDirectMessage,
     })
+    if (!deliver) {
+      rememberSeen(messageId)
+      return true
+    }
+    if (mentioned && !route.isDirectMessage) await rememberThread(channelId, route.replyThreadTs!)
+
+    process.stderr.write(`channel-bridge: accepted Slack message ${messageId} from ${source}\n`)
+    if (policy.ackReaction) {
+      await web.reactions.add({
+        channel: channelId,
+        timestamp: messageId,
+        name: policy.ackReaction,
+      }).catch(error => {
+        process.stderr.write(`channel-bridge: failed to acknowledge Slack message ${messageId}: ${error}\n`)
+      })
+    }
+
+    const files = Array.isArray(event.files) ? event.files as Array<Record<string, unknown>> : []
+    const attachments = files.map(file => `${file.name ?? file.id} (${file.mimetype ?? 'unknown'}, ${file.size ?? '?'}B)`)
+    const content = stripMention(text, botUserId) || (attachments.length ? '请查看附件。' : '')
+    if (codex) {
+      try {
+        const downloaded = await downloadInboundFiles(files)
+        const response = await codex.runTurn(route.sessionKey, {
+          text: content,
+          imagePaths: downloaded.imagePaths,
+          filePaths: downloaded.filePaths,
+        })
+        await postSlackReply(channelId, response, route.replyThreadTs)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        await postSlackReply(channelId, `Codex 运行失败：${message}`, route.replyThreadTs)
+        if (message.includes('timed out')) setTimeout(() => void shutdown(), 250)
+      }
+    } else {
+      await (mcp as unknown as { notification(input: unknown): Promise<void> }).notification({
+        method: 'notifications/claude/channel',
+        params: {
+          content,
+          meta: {
+            source: 'slack', chat_id: channelId, message_id: messageId,
+            user_id: userId, ts: messageId,
+            ...(route.replyThreadTs ? { thread_ts: route.replyThreadTs } : {}),
+            ...(attachments.length ? { attachment_count: String(attachments.length), attachments: attachments.join('; ') } : {}),
+          },
+        },
+      })
+    }
+    rememberSeen(messageId)
+    return true
+  } catch (error) {
+    process.stderr.write(`channel-bridge: failed Slack message ${messageId} from ${source}: ${error}\n`)
+    return false
+  } finally {
+    processing.delete(messageId)
   }
+}
+
+socket.on('slack_event', async ({ body, ack }) => {
+  await ack()
+  await handleSlackEvent((body as { event?: Record<string, unknown> }).event, 'socket')
 })
 
 if (codex) await codex.start()
 else await mcp.connect(new StdioServerTransport())
+
+const pollWatermarks = new Map<string, string>()
+for (const channel of pollChannels) {
+  try {
+    const history = await web.conversations.history({ channel, limit: 1 })
+    const latest = history.messages?.[0]
+    if (latest?.ts) {
+      const shouldRecoverLatest =
+        !latest.bot_id &&
+        !latest.subtype &&
+        Boolean(latest.user) &&
+        isSlackTsRecent(latest.ts)
+      pollWatermarks.set(channel, shouldRecoverLatest ? slackTsBefore(latest.ts) : latest.ts)
+    }
+  } catch (error) {
+    process.stderr.write(`channel-bridge: failed to initialize Slack poll channel ${channel}: ${error}\n`)
+  }
+}
+
 await socket.start()
 process.stderr.write(`channel-bridge: Slack connected as ${auth.user ?? botUserId} (runtime=${runtime})\n`)
+if (pollChannels.length) {
+  process.stderr.write(`channel-bridge: Slack polling fallback enabled for ${pollChannels.join(', ')} every ${pollIntervalMs}ms\n`)
+}
+
+let pollRunning = false
+async function pollSlackHistory(): Promise<void> {
+  if (pollRunning) return
+  pollRunning = true
+  try {
+    for (const channel of pollChannels) {
+      const watermark = pollWatermarks.get(channel)
+      const history = await web.conversations.history({
+        channel,
+        ...(watermark ? { oldest: watermark, inclusive: false } : {}),
+        limit: 100,
+      })
+      const messages = orderMessagesAfter(
+        (history.messages ?? []) as SlackHistoryMessage[],
+        watermark,
+      )
+      for (const message of messages) {
+        const consumed = await handleSlackEvent({ type: 'message', channel, ...message }, 'poll')
+        if (!consumed) break
+        if (message.ts) pollWatermarks.set(channel, message.ts)
+      }
+    }
+  } catch (error) {
+    process.stderr.write(`channel-bridge: Slack polling fallback failed: ${error}\n`)
+  } finally {
+    pollRunning = false
+  }
+}
+
+const pollTimer = pollChannels.length
+  ? setInterval(() => void pollSlackHistory(), pollIntervalMs)
+  : undefined
 
 async function shutdown(): Promise<void> {
+  if (pollTimer) clearInterval(pollTimer)
   await socket.disconnect().catch(() => {})
   await codex?.stop().catch(() => {})
   process.exit(0)
