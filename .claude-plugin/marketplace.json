@@ -1,0 +1,20 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "weyhon-channel-bridge",
+  "description": "Weyhon's messaging channel bridges for Claude Code and Codex.",
+  "owner": {
+    "name": "Weyhon"
+  },
+  "plugins": [
+    {
+      "name": "channel-bridge",
+      "description": "Slack channel bridge with allowlists, mention-aware threads, Claude Channel MCP, and Codex app-server runtimes.",
+      "author": {
+        "name": "Weyhon"
+      },
+      "source": "./",
+      "category": "productivity",
+      "homepage": "https://github.com/weyhon/channel-bridge-mcp"
+    }
+  ]
+}

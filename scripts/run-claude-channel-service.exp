@@ -1,0 +1,30 @@
+#!/usr/bin/expect -f
+
+foreach required {CLAUDE_BIN CLAUDE_CHANNEL_PLUGIN CLAUDE_SESSION_ID CLAUDE_SETTINGS_FILE} {
+  if {![info exists env($required)] || $env($required) eq ""} {
+    puts stderr "missing required environment variable: $required"
+    exit 64
+  }
+}
+
+set timeout -1
+set command [list \
+  $env(CLAUDE_BIN) \
+  --dangerously-skip-permissions \
+  --dangerously-load-development-channels $env(CLAUDE_CHANNEL_PLUGIN) \
+  --resume $env(CLAUDE_SESSION_ID) \
+  --setting-sources project,local \
+  --settings $env(CLAUDE_SETTINGS_FILE) \
+  --no-chrome]
+
+eval spawn -noecho $command
+
+# Development channels require one local confirmation on every process start.
+# Expect owns the pseudo-terminal for the lifetime of Claude, so launchd can
+# supervise an otherwise interactive Channels session without a visible window.
+after 5000
+send -- "\r"
+expect eof
+
+set result [wait]
+exit [lindex $result 3]

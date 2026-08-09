@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>__SERVICE_LABEL__</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE_BIN__</string>
+    <string>__PROJECT_ROOT__/dist/src/index.js</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__CODEX_CWD__</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>CHANNEL_BRIDGE_STATE_DIR</key>
+    <string>__STATE_DIR__</string>
+    <key>PATH</key>
+    <string>__PATH__</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>StandardOutPath</key>
+  <string>__STATE_DIR__/logs/stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>__STATE_DIR__/logs/stderr.log</string>
+</dict>
+</plist>
